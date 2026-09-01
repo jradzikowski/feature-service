@@ -1,0 +1,115 @@
+
+name: Build Spring Boot image with Paketo
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ] # Runs when someone targets a PR to master
+
+jobs:
+  test:
+    runs-on: arc-runner-set-feature-service
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Run tests
+        run: ./mvnw test
+
+  build-and-deploy:
+    needs: test # Ensures tests pass before starting build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: arc-runner-set-feature-service
+
+    env:
+      HOME: /home/runner
+      DOCKER_CONFIG: /home/runner/.docker
+      MAVEN_OPTS: "-Duser.home=/home/runner"
+
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      
+      - name: Set version
+        shell: bash
+        run: |
+          git fetch --tags
+          echo "tag from git: $(git describe --tags --abbrev=0 2>/dev/null)"
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.1")
+          echo "Current version: $LATEST_TAG"
+          VERSION=${LATEST_TAG#v}
+          MAJOR=$(echo $VERSION | cut -d. -f1)
+          MINOR=$(echo $VERSION | cut -d. -f2)
+          PATCH=$(echo $VERSION | cut -d. -f3)
+          NEW_TAG="v$MAJOR.$MINOR.$((PATCH + 1))"
+
+          # You need to export BOTH for the rest of the YAML to work
+          echo "VERSION=$NEW_TAG" >> $GITHUB_ENV
+          echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
+          echo "New version: $NEW_TAG"
+
+      - name: Login to Docker hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Build image with Paketo (pack)
+        shell: bash
+        env:
+          PACK_VOLUME_KEY: "${{ vars.DOCKERHUB_IMAGE_NAME }}-cache"
+          MAVEN_OPTS: "-Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5"
+        run: |
+          ./mvnw -e spring-boot:build-image \
+            -Dspring-boot.build-image.builder=paketobuildpacks/builder-noble-java-tiny@sha256:76a5f92bd254fd850ab8797f56ecece66517477253d56239f60257e2fff7a874 \
+            -Dspring-boot.build-image.imageName=${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE_NAME }}:${{ env.NEW_TAG }} \
+            -Dspring-boot.build-image.publish=true \
+            -Dspring-boot.build-image.env.BP_JVM_VERSION=21 \
+            -Dspring-boot.build-image.env.BP_JVM_TYPE=JDK \
+            -Dspring-boot.build-image.env.BPE_APP_VERSION=${{ env.NEW_TAG }} \
+            -DskipTests
+
+      - name: Deploy to Kubernetes
+        run: |
+          # 1. Install kubectl if not present in your runner image
+          if ! command -v kubectl &> /dev/null; then
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/
+          fi
+          
+          # 2. Update the image
+          kubectl set image deployment/feature-service \
+            feature-service=${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE_NAME }}:${{ env.VERSION }} \
+            -n internal-services
+
+      - name: Push Version Tag
+        if: github.ref == 'refs/heads/master'  # Only tag when merging to master
+        shell: bash
+        run: |
+          # 1. Configure a dummy git user for the runner
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 2. Create the tag locally on the runner
+          git tag ${{ env.NEW_TAG }}
+          
+          # 3. Push the tag to your GitHub repository (origin)
+          git push origin ${{ env.NEW_TAG }}

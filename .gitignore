@@ -1,0 +1,8 @@
+target/
+ui/node_modules/
+ui/dist/
+*.hprof
+.idea/
+*.iml
+.vscode/
+.DS_Store

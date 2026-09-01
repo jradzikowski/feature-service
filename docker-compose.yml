@@ -1,0 +1,16 @@
+# Local Postgres for the `local` profile. App: ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+services:
+  postgres:
+    image: postgres:latest
+    container_name: featureservice-postgres
+    environment:
+      POSTGRES_DB: featuredb
+      POSTGRES_USER: features
+      POSTGRES_PASSWORD: features
+    ports:
+      - "11231:5432"
+    volumes:
+      - featuredb-data:/var/lib/postgresql/data
+
+volumes:
+  featuredb-data:

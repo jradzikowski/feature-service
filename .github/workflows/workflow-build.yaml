@@ -1,5 +1,5 @@
 
-name: Build Spring Boot image with Paketo
+name: Build feature-service image (backend + admin UI)
 
 on:
   push:
@@ -10,6 +10,12 @@ on:
 jobs:
   test:
     runs-on: arc-runner-set-feature-service
+
+    # ARC runner: point Maven/npm caches at the real runner home
+    env:
+      HOME: /home/runner
+      MAVEN_OPTS: "-Duser.home=/home/runner"
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v6
@@ -19,6 +25,7 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
+      # Builds the admin UI too (frontend-maven-plugin), so a PR verifies both backend and UI
       - name: Run tests
         run: ./mvnw test
 
@@ -41,7 +48,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      
+
       - name: Set version
         shell: bash
         run: |
@@ -71,20 +78,21 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Build image with Paketo (pack)
+      # frontend-maven-plugin builds ui/ into /static/admin inside the JAR,
+      # so the single JAR (and image) contains backend + admin panel
+      - name: Build JAR (backend + admin UI)
         shell: bash
         env:
-          PACK_VOLUME_KEY: "${{ vars.DOCKERHUB_IMAGE_NAME }}-cache"
-          MAVEN_OPTS: "-Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5"
+          MAVEN_OPTS: "-Duser.home=/home/runner -Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5"
+        run: ./mvnw -e package -DskipTests
+
+      - name: Build and push Docker image
+        shell: bash
         run: |
-          ./mvnw -e spring-boot:build-image \
-            -Dspring-boot.build-image.builder=paketobuildpacks/builder-noble-java-tiny@sha256:76a5f92bd254fd850ab8797f56ecece66517477253d56239f60257e2fff7a874 \
-            -Dspring-boot.build-image.imageName=${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE_NAME }}:${{ env.NEW_TAG }} \
-            -Dspring-boot.build-image.publish=true \
-            -Dspring-boot.build-image.env.BP_JVM_VERSION=21 \
-            -Dspring-boot.build-image.env.BP_JVM_TYPE=JDK \
-            -Dspring-boot.build-image.env.BPE_APP_VERSION=${{ env.NEW_TAG }} \
-            -DskipTests
+          IMAGE=${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE_NAME }}
+          docker build -t $IMAGE:${{ env.NEW_TAG }} -t $IMAGE:latest .
+          docker push $IMAGE:${{ env.NEW_TAG }}
+          docker push $IMAGE:latest
 
       - name: Deploy to Kubernetes
         run: |
@@ -94,7 +102,7 @@ jobs:
             chmod +x kubectl
             sudo mv kubectl /usr/local/bin/
           fi
-          
+
           # 2. Update the image
           kubectl set image deployment/feature-service \
             feature-service=${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE_NAME }}:${{ env.VERSION }} \
@@ -107,9 +115,9 @@ jobs:
           # 1. Configure a dummy git user for the runner
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           # 2. Create the tag locally on the runner
           git tag ${{ env.NEW_TAG }}
-          
+
           # 3. Push the tag to your GitHub repository (origin)
           git push origin ${{ env.NEW_TAG }}

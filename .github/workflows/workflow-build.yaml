@@ -29,8 +29,8 @@ jobs:
       - name: Run tests
         run: ./mvnw test
 
-  build-and-deploy:
-    needs: test # Ensures tests pass before starting build
+  build:
+    needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: arc-runner-set-feature-service
 
@@ -43,6 +43,9 @@ jobs:
       contents: write
       packages: write
 
+    outputs:
+      version: ${{ steps.set-version.outputs.NEW_TAG }}
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v6
@@ -50,6 +53,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set version
+        id: set-version
         shell: bash
         run: |
           git fetch --tags
@@ -62,9 +66,9 @@ jobs:
           PATCH=$(echo $VERSION | cut -d. -f3)
           NEW_TAG="v$MAJOR.$MINOR.$((PATCH + 1))"
 
-          # You need to export BOTH for the rest of the YAML to work
           echo "VERSION=$NEW_TAG" >> $GITHUB_ENV
           echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
+          echo "NEW_TAG=$NEW_TAG" >> $GITHUB_OUTPUT
           echo "New version: $NEW_TAG"
 
       - name: Login to Docker hub
@@ -94,30 +98,31 @@ jobs:
           docker push $IMAGE:${{ env.NEW_TAG }}
           docker push $IMAGE:latest
 
+      - name: Push Version Tag
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ env.NEW_TAG }}
+          git push origin ${{ env.NEW_TAG }}
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: arc-runner-set-feature-service
+
+    env:
+      HOME: /home/runner
+
+    steps:
       - name: Deploy to Kubernetes
         run: |
-          # 1. Install kubectl if not present in your runner image
           if ! command -v kubectl &> /dev/null; then
             curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
             chmod +x kubectl
             sudo mv kubectl /usr/local/bin/
           fi
 
-          # 2. Update the image
           kubectl set image deployment/feature-service \
-            feature-service=${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE_NAME }}:${{ env.VERSION }} \
+            feature-service=${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE_NAME }}:${{ needs.build.outputs.version }} \
             -n internal-services
-
-      - name: Push Version Tag
-        if: github.ref == 'refs/heads/master'  # Only tag when merging to master
-        shell: bash
-        run: |
-          # 1. Configure a dummy git user for the runner
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # 2. Create the tag locally on the runner
-          git tag ${{ env.NEW_TAG }}
-
-          # 3. Push the tag to your GitHub repository (origin)
-          git push origin ${{ env.NEW_TAG }}

@@ -115,14 +115,22 @@ jobs:
       HOME: /home/runner
 
     steps:
-      - name: Deploy to Kubernetes
+      - name: Debug kubectl auth
         run: |
           if ! command -v kubectl &> /dev/null; then
             curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
             chmod +x kubectl
             sudo mv kubectl /usr/local/bin/
           fi
+          echo "=== kubeconfig ==="
+          kubectl config view || echo "no kubeconfig"
+          echo "=== service account token ==="
+          ls /var/run/secrets/kubernetes.io/serviceaccount/ || echo "no SA token"
+          echo "=== can-i ==="
+          kubectl auth can-i patch deployments -n internal-services || true
 
+      - name: Deploy to Kubernetes
+        run: |
           kubectl set image deployment/feature-service \
             feature-service=${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE_NAME }}:${{ needs.build.outputs.version }} \
             -n internal-services

@@ -5,7 +5,10 @@ import com.awesomesoft.features.application.dto.AdminDtos.AdminUserResponse;
 import com.awesomesoft.features.application.dto.AdminDtos.CreateAdminUserRequest;
 import com.awesomesoft.features.application.dto.AdminDtos.UpdateAdminUserRequest;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+
+import static com.awesomesoft.features.config.OpenApiConfig.BASIC_AUTH;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -22,6 +25,7 @@ import java.util.List;
 import java.util.UUID;
 
 @Tag(name = "Admin - Users", description = "Panel accounts (ADMIN role required)")
+@SecurityRequirement(name = BASIC_AUTH)
 @RestController
 @RequestMapping("/features-api/v1/admin/users")
 @RequiredArgsConstructor

@@ -6,7 +6,10 @@ import com.awesomesoft.features.application.dto.EvaluateResponse;
 import com.awesomesoft.features.config.ApplicationPrincipal;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+
+import static com.awesomesoft.features.config.OpenApiConfig.BEARER_AUTH;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -23,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 
 @Tag(name = "Evaluation", description = "Evaluated flag values for a context; backend-token auth")
+@SecurityRequirement(name = BEARER_AUTH)
 @RestController
 @RequestMapping("/features-api/v1")
 @RequiredArgsConstructor

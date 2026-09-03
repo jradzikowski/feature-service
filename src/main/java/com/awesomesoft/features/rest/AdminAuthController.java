@@ -5,7 +5,10 @@ import com.awesomesoft.features.application.dto.AdminDtos.SessionUserResponse;
 import com.awesomesoft.features.config.LoginRateLimiter;
 import com.awesomesoft.features.domain.AdminRole;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+
+import static com.awesomesoft.features.config.OpenApiConfig.BASIC_AUTH;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -51,12 +54,14 @@ public class AdminAuthController {
     }
 
     @Operation(summary = "Current session user")
+    @SecurityRequirement(name = BASIC_AUTH)
     @GetMapping("/me")
     public ResponseEntity<SessionUserResponse> me(Authentication authentication) {
         return ResponseEntity.ok(toSessionUser(authentication));
     }
 
     @Operation(summary = "Logout (invalidates the session)")
+    @SecurityRequirement(name = BASIC_AUTH)
     @PostMapping("/logout")
     public ResponseEntity<Void> logout(HttpServletRequest request, HttpServletResponse response) {
         HttpSession session = request.getSession(false);

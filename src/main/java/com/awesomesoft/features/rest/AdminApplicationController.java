@@ -5,7 +5,10 @@ import com.awesomesoft.features.application.dto.ApplicationDtos.ApplicationRespo
 import com.awesomesoft.features.application.dto.ApplicationDtos.CreateApplicationRequest;
 import com.awesomesoft.features.application.dto.ApplicationDtos.UpdateApplicationRequest;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+
+import static com.awesomesoft.features.config.OpenApiConfig.BASIC_AUTH;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -21,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 @Tag(name = "Admin - Applications")
+@SecurityRequirement(name = BASIC_AUTH)
 @RestController
 @RequestMapping("/features-api/v1/admin/applications")
 @RequiredArgsConstructor

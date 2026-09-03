@@ -17,6 +17,8 @@ przez frontend-maven-plugin.
 # login: admin / admin-change-me (features.admin.initial-*)
 ```
 
+na prodzie UI i backend działają na porcie 8080
+
 Swagger: `http://localhost:11230/swagger-ui.html`. Actuator (health/prometheus): port `9091`.
 
 Praca nad panelem z hot-reloadem:

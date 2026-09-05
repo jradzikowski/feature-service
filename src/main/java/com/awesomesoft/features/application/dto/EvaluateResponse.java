@@ -17,6 +17,7 @@ public record EvaluateResponse(String applicationSlug,
     public enum Reason {
         DEFAULT,
         WORKGROUP_OVERRIDE,
+        PLAN,
         LOCKED
     }
 }

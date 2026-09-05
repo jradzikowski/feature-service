@@ -412,6 +412,13 @@ function OverridesSection({
   const { slug = '' } = useParams();
   const [editing, setEditing] = useState<OverrideResponse | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [workgroupNames, setWorkgroupNames] = useState<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    api.listWorkgroups().then((wgs) => {
+      setWorkgroupNames(new Map(wgs.map((w) => [w.id, w.name])));
+    }).catch(() => {});
+  }, []);
 
   const startEdit = (o: OverrideResponse) => {
     setEditing(o);
@@ -431,7 +438,7 @@ function OverridesSection({
         <table className="table">
           <thead>
             <tr>
-              <th>Workgroup ID</th>
+              <th>Workgroup</th>
               <th>Override value</th>
               <th>Note</th>
               <th>Updated</th>
@@ -439,14 +446,16 @@ function OverridesSection({
             </tr>
           </thead>
           <tbody>
-            {flag.overrides.map((o) => (
+            {flag.overrides.map((o) => {
+              const name = workgroupNames.get(o.workgroupId);
+              return (
               <tr key={o.workgroupId}>
-                <td className="mono">
+                <td>
                   <Link
                     to={`/apps/${encodeURIComponent(slug)}/workgroup?workgroupId=${encodeURIComponent(o.workgroupId)}`}
-                    title="Show all flags for this workgroup"
+                    title={name ? o.workgroupId : 'Show all flags for this workgroup'}
                   >
-                    {o.workgroupId}
+                    {name ?? <span className="mono">{o.workgroupId}</span>}
                   </Link>
                 </td>
                 <td>
@@ -466,7 +475,8 @@ function OverridesSection({
                   </td>
                 )}
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}

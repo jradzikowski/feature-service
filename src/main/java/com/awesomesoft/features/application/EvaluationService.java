@@ -6,10 +6,14 @@ import com.awesomesoft.features.application.dto.EvaluateResponse.Reason;
 import com.awesomesoft.features.domain.ClientApplication;
 import com.awesomesoft.features.domain.Flag;
 import com.awesomesoft.features.domain.FlagOverride;
+import com.awesomesoft.features.domain.PlanFlag;
 import com.awesomesoft.features.domain.ValueType;
+import com.awesomesoft.features.domain.WorkgroupPlan;
 import com.awesomesoft.features.infrastructure.ApplicationJpaRepository;
 import com.awesomesoft.features.infrastructure.FlagJpaRepository;
 import com.awesomesoft.features.infrastructure.FlagOverrideJpaRepository;
+import com.awesomesoft.features.infrastructure.PlanFlagJpaRepository;
+import com.awesomesoft.features.infrastructure.WorkgroupPlanJpaRepository;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -29,7 +33,7 @@ import java.util.UUID;
 /**
  * Resolves flag values for a context. The assembled per-application config is cached in Caffeine;
  * admin writes invalidate it after commit (the short TTL is only a safety net for missed
- * invalidations). Resolution order: locked > workgroup override > default.
+ * invalidations). Resolution order: locked > workgroup override > plan > default.
  */
 @Service
 public class EvaluationService {
@@ -39,6 +43,8 @@ public class EvaluationService {
     private final ApplicationJpaRepository applicationRepository;
     private final FlagJpaRepository flagRepository;
     private final FlagOverrideJpaRepository overrideRepository;
+    private final PlanFlagJpaRepository planFlagRepository;
+    private final WorkgroupPlanJpaRepository workgroupPlanRepository;
     private final JsonValues jsonValues;
     private final MeterRegistry meterRegistry;
 
@@ -48,11 +54,14 @@ public class EvaluationService {
             .build();
 
     public EvaluationService(ApplicationJpaRepository applicationRepository, FlagJpaRepository flagRepository,
-                             FlagOverrideJpaRepository overrideRepository, JsonValues jsonValues,
+                             FlagOverrideJpaRepository overrideRepository, PlanFlagJpaRepository planFlagRepository,
+                             WorkgroupPlanJpaRepository workgroupPlanRepository, JsonValues jsonValues,
                              MeterRegistry meterRegistry) {
         this.applicationRepository = applicationRepository;
         this.flagRepository = flagRepository;
         this.overrideRepository = overrideRepository;
+        this.planFlagRepository = planFlagRepository;
+        this.workgroupPlanRepository = workgroupPlanRepository;
         this.jsonValues = jsonValues;
         this.meterRegistry = meterRegistry;
     }
@@ -61,7 +70,7 @@ public class EvaluationService {
         Snapshot snapshot = snapshots.get(applicationId, this::loadSnapshot);
         Map<String, EvaluatedFlag> flags = new LinkedHashMap<>();
         for (FlagConfig flag : snapshot.flags()) {
-            flags.put(flag.key(), resolve(flag, workgroupId));
+            flags.put(flag.key(), resolve(flag, workgroupId, snapshot.workgroupToPlan()));
         }
         meterRegistry.counter("features.evaluations", "application", applicationSlug).increment();
         return new EvaluateResponse(applicationSlug, snapshot.version(), Instant.now(), flags);
@@ -84,7 +93,7 @@ public class EvaluationService {
         }
     }
 
-    private EvaluatedFlag resolve(FlagConfig flag, UUID workgroupId) {
+    private EvaluatedFlag resolve(FlagConfig flag, UUID workgroupId, Map<UUID, UUID> workgroupToPlan) {
         if (flag.locked()) {
             return new EvaluatedFlag(flag.type(), flag.defaultValue(), Reason.LOCKED);
         }
@@ -92,6 +101,13 @@ public class EvaluationService {
             JsonNode override = flag.overrides().get(workgroupId);
             if (override != null) {
                 return new EvaluatedFlag(flag.type(), override, Reason.WORKGROUP_OVERRIDE);
+            }
+            UUID planId = workgroupToPlan.get(workgroupId);
+            if (planId != null) {
+                JsonNode planValue = flag.planValues().get(planId);
+                if (planValue != null) {
+                    return new EvaluatedFlag(flag.type(), planValue, Reason.PLAN);
+                }
             }
         }
         return new EvaluatedFlag(flag.type(), flag.defaultValue(), Reason.DEFAULT);
@@ -102,22 +118,36 @@ public class EvaluationService {
                 .map(ClientApplication::getConfigVersion)
                 .orElse(0L);
         List<Flag> flags = flagRepository.findByApplicationIdAndArchivedFalseOrderByFlagKey(applicationId);
+
         Map<UUID, Map<UUID, JsonNode>> overridesByFlag = new HashMap<>();
         for (FlagOverride override : overrideRepository.findAllByApplicationId(applicationId)) {
             overridesByFlag.computeIfAbsent(override.getFlagId(), k -> new HashMap<>())
                     .put(override.getWorkgroupId(), jsonValues.parse(override.getValue()));
         }
+
+        Map<UUID, Map<UUID, JsonNode>> planValuesByFlag = new HashMap<>();
+        for (PlanFlag pf : planFlagRepository.findAllByApplicationId(applicationId)) {
+            planValuesByFlag.computeIfAbsent(pf.getFlagId(), k -> new HashMap<>())
+                    .put(pf.getPlanId(), jsonValues.parse(pf.getValue()));
+        }
+
+        Map<UUID, UUID> workgroupToPlan = new HashMap<>();
+        for (WorkgroupPlan wp : workgroupPlanRepository.findByApplicationId(applicationId)) {
+            workgroupToPlan.put(wp.getWorkgroupId(), wp.getPlanId());
+        }
+
         List<FlagConfig> configs = flags.stream()
                 .map(f -> new FlagConfig(f.getFlagKey(), f.getValueType(), jsonValues.parse(f.getDefaultValue()),
-                        f.isLocked(), overridesByFlag.getOrDefault(f.getId(), Map.of())))
+                        f.isLocked(), overridesByFlag.getOrDefault(f.getId(), Map.of()),
+                        planValuesByFlag.getOrDefault(f.getId(), Map.of())))
                 .toList();
-        return new Snapshot(version, configs);
+        return new Snapshot(version, configs, workgroupToPlan);
     }
 
     private record FlagConfig(String key, ValueType type, JsonNode defaultValue, boolean locked,
-                              Map<UUID, JsonNode> overrides) {
+                              Map<UUID, JsonNode> overrides, Map<UUID, JsonNode> planValues) {
     }
 
-    private record Snapshot(long version, List<FlagConfig> flags) {
+    private record Snapshot(long version, List<FlagConfig> flags, Map<UUID, UUID> workgroupToPlan) {
     }
 }

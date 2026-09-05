@@ -7,10 +7,13 @@ import { AuditLogPage } from './pages/AuditLogPage';
 import { FlagDetailPage } from './pages/FlagDetailPage';
 import { FlagsPage } from './pages/FlagsPage';
 import { LoginPage } from './pages/LoginPage';
+import { PlanDetailPage } from './pages/PlanDetailPage';
+import { PlansPage } from './pages/PlansPage';
 import { StaleFlagsPage } from './pages/StaleFlagsPage';
 import { TokensPage } from './pages/TokensPage';
 import { UsersPage } from './pages/UsersPage';
 import { WorkgroupPage } from './pages/WorkgroupPage';
+import { WorkgroupsPage } from './pages/WorkgroupsPage';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
@@ -72,14 +75,25 @@ function Sidebar() {
             >
               Workgroup lookup
             </NavLink>
+            <NavLink
+              to={`/apps/${encodeURIComponent(slug)}/plans`}
+              className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+            >
+              Plans
+            </NavLink>
           </div>
         )}
       </nav>
       <div className="sidebar-footer">
         {isAdmin && (
-          <NavLink to="/users" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
-            Users
-          </NavLink>
+          <>
+            <NavLink to="/users" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
+              Users
+            </NavLink>
+            <NavLink to="/workgroups" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
+              Workgroups
+            </NavLink>
+          </>
         )}
         <div className="sidebar-user">
           <div>
@@ -121,6 +135,9 @@ export function App() {
                 <Route path="/apps/:slug/tokens" element={<TokensPage />} />
                 <Route path="/apps/:slug/audit" element={<AuditLogPage />} />
                 <Route path="/apps/:slug/workgroup" element={<WorkgroupPage />} />
+                <Route path="/apps/:slug/plans" element={<PlansPage />} />
+                <Route path="/apps/:slug/plans/:planId" element={<PlanDetailPage />} />
+                <Route path="/workgroups" element={<WorkgroupsPage />} />
                 <Route path="/users" element={<UsersPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

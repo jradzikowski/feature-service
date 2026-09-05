@@ -131,3 +131,41 @@ export interface AdminUser {
   role: AdminRole;
   enabled: boolean;
 }
+
+export interface WorkgroupResponse {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlanResponse {
+  id: string;
+  name: string;
+  description?: string | null;
+  flagCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlanFlagEntry {
+  flagKey: string;
+  value: JsonValue;
+}
+
+export interface PlanDetailResponse {
+  id: string;
+  name: string;
+  description?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  flags: PlanFlagEntry[];
+}
+
+export interface WorkgroupPlanResponse {
+  workgroupId: string;
+  workgroupName: string;
+  planId: string;
+  planName: string;
+  assignedAt: string;
+}

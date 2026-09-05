@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import * as api from '../api';
-import { errorMessage } from '../api';
+import { ApiError, errorMessage } from '../api';
 import { useAuth } from '../auth';
 import { ConfirmModal, Modal } from '../components/Modal';
 import {
@@ -16,11 +16,11 @@ import {
   ValueField,
 } from '../components/ui';
 import { useToast } from '../toast';
-import type { FlagKind, FlagResponse, JsonValue, WorkgroupOverride } from '../types';
+import type { FlagKind, FlagResponse, JsonValue, PlanResponse, WorkgroupOverride, WorkgroupPlanResponse, WorkgroupResponse } from '../types';
 import { FLAG_KINDS } from '../types';
 import { formatDate, formatValue, isStale, isValidUuid, parseValueInput, valueToRaw } from '../values';
 
-type ValueSource = 'DEFAULT' | 'OVERRIDE' | 'LOCKED';
+type ValueSource = 'DEFAULT' | 'OVERRIDE' | 'PLAN' | 'LOCKED';
 
 /** A flag joined with the workgroup's override, resolved the same way EvaluationService does. */
 interface ResolvedFlag {
@@ -34,8 +34,12 @@ type PendingAction =
   | { type: 'setOverride'; row: ResolvedFlag; value: JsonValue; note: string }
   | { type: 'removeOverride'; row: ResolvedFlag };
 
-/** Mirrors backend resolution order: locked > workgroup override > default. */
-function resolveFlags(flags: FlagResponse[], overrides: WorkgroupOverride[]): ResolvedFlag[] {
+/** Mirrors backend resolution order: locked > workgroup override > plan > default. */
+function resolveFlags(
+  flags: FlagResponse[],
+  overrides: WorkgroupOverride[],
+  planFlags: Map<string, JsonValue>,
+): ResolvedFlag[] {
   const overridesByKey = new Map(overrides.map((o) => [o.flagKey, o]));
   return flags.map((flag) => {
     const override = overridesByKey.get(flag.flagKey) ?? null;
@@ -45,16 +49,25 @@ function resolveFlags(flags: FlagResponse[], overrides: WorkgroupOverride[]): Re
     if (override) {
       return { flag, effectiveValue: override.value, source: 'OVERRIDE' as const, override };
     }
+    if (planFlags.has(flag.flagKey)) {
+      return { flag, effectiveValue: planFlags.get(flag.flagKey)!, source: 'PLAN' as const, override };
+    }
     return { flag, effectiveValue: flag.defaultValue, source: 'DEFAULT' as const, override };
   });
 }
 
-function ScopeBadge({ resolved }: { resolved: ResolvedFlag }) {
+function ScopeBadge({ resolved, planName }: { resolved: ResolvedFlag; planName?: string | null }) {
   switch (resolved.source) {
     case 'OVERRIDE':
       return (
         <Badge tone="blue" title={resolved.override?.note ? `Note: ${resolved.override.note}` : 'Workgroup override'}>
           WORKGROUP
+        </Badge>
+      );
+    case 'PLAN':
+      return (
+        <Badge tone="purple" title={planName ? `Value from plan: ${planName}` : 'Value from plan'}>
+          PLAN
         </Badge>
       );
     case 'LOCKED':
@@ -88,7 +101,10 @@ export function WorkgroupPage() {
 
   const [input, setInput] = useState(workgroupId);
   const [inputError, setInputError] = useState<string | null>(null);
+  const [nameMatches, setNameMatches] = useState<WorkgroupResponse[]>([]);
   const [resolved, setResolved] = useState<ResolvedFlag[] | null>(null);
+  const [planAssignment, setPlanAssignment] = useState<WorkgroupPlanResponse | null>(null);
+  const [showPlanModal, setShowPlanModal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -105,11 +121,30 @@ export function WorkgroupPage() {
   const load = useCallback(() => {
     if (!workgroupId) {
       setResolved(null);
+      setPlanAssignment(null);
       return;
     }
     setError(null);
-    Promise.all([api.listFlags(slug, false), api.listWorkgroupOverrides(slug, workgroupId)])
-      .then(([flags, overrides]) => setResolved(resolveFlags(flags, overrides)))
+    const flagsAndOverrides = Promise.all([
+      api.listFlags(slug, false),
+      api.listWorkgroupOverrides(slug, workgroupId),
+    ]);
+    const planData = api.getWorkgroupPlan(slug, workgroupId).catch((err) => {
+      if (err instanceof ApiError && err.status === 404) return null;
+      throw err;
+    });
+    Promise.all([flagsAndOverrides, planData])
+      .then(async ([[flags, overrides], assignment]) => {
+        let planFlags = new Map<string, JsonValue>();
+        if (assignment) {
+          setPlanAssignment(assignment);
+          const planDetail = await api.getPlan(slug, assignment.planId);
+          planFlags = new Map(planDetail.flags.map((f) => [f.flagKey, f.value]));
+        } else {
+          setPlanAssignment(null);
+        }
+        setResolved(resolveFlags(flags, overrides, planFlags));
+      })
       .catch((err) => setError(errorMessage(err)))
       .finally(() => setLoading(false));
   }, [slug, workgroupId]);
@@ -117,19 +152,38 @@ export function WorkgroupPage() {
   useEffect(() => {
     setInput(workgroupId);
     setResolved(null);
+    setPlanAssignment(null);
     if (workgroupId) setLoading(true);
     load();
   }, [workgroupId, load]);
 
-  const lookup = (e: FormEvent) => {
-    e.preventDefault();
-    const id = input.trim();
-    if (!isValidUuid(id)) {
-      setInputError('Enter a valid workgroup UUID, e.g. 123e4567-e89b-12d3-a456-426614174000');
-      return;
-    }
+  const selectWorkgroup = (id: string) => {
+    setNameMatches([]);
     setInputError(null);
     setSearchParams({ workgroupId: id });
+  };
+
+  const lookup = (e: FormEvent) => {
+    e.preventDefault();
+    const value = input.trim();
+    if (!value) return;
+    setNameMatches([]);
+    setInputError(null);
+    if (isValidUuid(value)) {
+      setSearchParams({ workgroupId: value });
+      return;
+    }
+    api.listWorkgroups(value).then((matches) => {
+      if (matches.length === 0) {
+        setInputError(`No workgroup found matching "${value}".`);
+      } else if (matches.length === 1) {
+        selectWorkgroup(matches[0].id);
+      } else {
+        setNameMatches(matches);
+      }
+    }).catch(() => {
+      setInputError('Failed to search workgroups.');
+    });
   };
 
   const runPending = async () => {
@@ -181,28 +235,85 @@ export function WorkgroupPage() {
       <form className="toolbar" onSubmit={lookup}>
         <input
           type="text"
-          className="mono wide-input"
-          placeholder="Workgroup UUID…"
+          className="wide-input"
+          placeholder="Workgroup UUID or name…"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => { setInput(e.target.value); setNameMatches([]); setInputError(null); }}
         />
         <button type="submit" className="btn btn-primary" disabled={loading}>
           {loading ? 'Looking up…' : 'Look up'}
         </button>
       </form>
       {inputError && <div className="field-error">{inputError}</div>}
+      {nameMatches.length > 1 && (
+        <div className="muted" style={{ marginTop: '6px' }}>
+          Multiple workgroups match — pick one:
+          <ul style={{ margin: '4px 0 0', paddingLeft: '1.2em' }}>
+            {nameMatches.map((w) => (
+              <li key={w.id}>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  style={{ marginTop: '4px' }}
+                  onClick={() => selectWorkgroup(w.id)}
+                >
+                  {w.name}
+                </button>{' '}
+                <span className="mono muted" style={{ fontSize: '0.8em' }}>{w.id}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {error && <ErrorBox message={error} />}
       {loading && <Loading />}
 
       {resolved && (
         <>
-          <h2>
-            Flags for <span className="mono">{workgroupId}</span>{' '}
-            <span className="muted">
-              ({overrideCount} override{overrideCount === 1 ? '' : 's'})
-            </span>
-          </h2>
+          <div className="page-header" style={{ marginTop: '1.5rem' }}>
+            <h2 style={{ margin: 0 }}>
+              Flags for <span className="mono">{workgroupId}</span>{' '}
+              <span className="muted">
+                ({overrideCount} override{overrideCount === 1 ? '' : 's'})
+              </span>
+            </h2>
+            {isAdmin && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {planAssignment ? (
+                  <>
+                    <span className="muted">Plan:</span>
+                    <strong>{planAssignment.planName}</strong>
+                    <button type="button" className="btn btn-sm" onClick={() => setShowPlanModal(true)}>
+                      Change
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-danger"
+                      onClick={async () => {
+                        try {
+                          await api.unassignWorkgroupPlan(slug, workgroupId);
+                          toast.success('Plan removed.');
+                          load();
+                        } catch (err) {
+                          toast.error(errorMessage(err));
+                        }
+                      }}
+                    >
+                      Remove plan
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="muted">No plan assigned.</span>
+                    <button type="button" className="btn btn-sm btn-primary" onClick={() => setShowPlanModal(true)}>
+                      Assign plan
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
 
           <div className="toolbar">
             <input
@@ -282,7 +393,7 @@ export function WorkgroupPage() {
                         )}
                       </td>
                       <td>
-                        <ScopeBadge resolved={row} />
+                        <ScopeBadge resolved={row} planName={planAssignment?.planName} />
                       </td>
                       <td>
                         <FlagStatusBadges flag={flag} />
@@ -314,6 +425,16 @@ export function WorkgroupPage() {
             </table>
           )}
         </>
+      )}
+
+      {showPlanModal && (
+        <AssignPlanModal
+          slug={slug}
+          workgroupId={workgroupId}
+          currentPlanId={planAssignment?.planId ?? null}
+          onClose={() => setShowPlanModal(false)}
+          onAssigned={() => { setShowPlanModal(false); load(); }}
+        />
       )}
 
       {editTarget && (
@@ -362,6 +483,78 @@ export function WorkgroupPage() {
         </ConfirmModal>
       )}
     </div>
+  );
+}
+
+function AssignPlanModal({
+  slug,
+  workgroupId,
+  currentPlanId,
+  onClose,
+  onAssigned,
+}: {
+  slug: string;
+  workgroupId: string;
+  currentPlanId: string | null;
+  onClose: () => void;
+  onAssigned: () => void;
+}) {
+  const toast = useToast();
+  const [plans, setPlans] = useState<PlanResponse[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState(currentPlanId ?? '');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.listPlans(slug).then(setPlans).catch(() => {});
+  }, [slug]);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedPlanId) return;
+    setBusy(true);
+    try {
+      await api.assignWorkgroupPlan(slug, workgroupId, selectedPlanId);
+      toast.success('Plan assigned.');
+      onAssigned();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Assign plan to workgroup" onClose={onClose}>
+      <form onSubmit={submit}>
+        <p className="muted">
+          Workgroup <span className="mono">{workgroupId}</span>
+        </p>
+        <div className="form-row">
+          <label htmlFor="plan-select">Plan</label>
+          <select
+            id="plan-select"
+            value={selectedPlanId}
+            onChange={(e) => setSelectedPlanId(e.target.value)}
+            required
+          >
+            <option value="">— select a plan —</option>
+            {plans.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={busy || !selectedPlanId}>
+            {busy ? 'Assigning…' : 'Assign plan'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

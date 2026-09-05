@@ -7,11 +7,16 @@ import type {
   FlagResponse,
   JsonValue,
   OverrideResponse,
+  PlanDetailResponse,
+  PlanFlagEntry,
+  PlanResponse,
   SessionUser,
   TokenCreatedResponse,
   TokenResponse,
   UpdateFlagRequest,
   WorkgroupOverride,
+  WorkgroupPlanResponse,
+  WorkgroupResponse,
 } from './types';
 
 const BASE = '/features-api/v1';
@@ -231,4 +236,102 @@ export function updateUser(
   patch: { role?: AdminUser['role']; enabled?: boolean; password?: string },
 ): Promise<AdminUser> {
   return request<AdminUser>(`/admin/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch });
+}
+
+// ---- Workgroups ----
+
+export function listWorkgroups(name?: string): Promise<WorkgroupResponse[]> {
+  return request<WorkgroupResponse[]>('/admin/workgroups', { query: { name } });
+}
+
+export function createWorkgroup(id: string, name: string): Promise<WorkgroupResponse> {
+  return request<WorkgroupResponse>('/admin/workgroups', { method: 'POST', body: { id, name } });
+}
+
+export function renameWorkgroup(id: string, name: string): Promise<WorkgroupResponse> {
+  return request<WorkgroupResponse>(`/admin/workgroups/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: { name },
+  });
+}
+
+export function deleteWorkgroup(id: string): Promise<void> {
+  return request<void>(`/admin/workgroups/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+// ---- Plans ----
+
+export function listPlans(slug: string): Promise<PlanResponse[]> {
+  return request<PlanResponse[]>(`/admin/applications/${encodeURIComponent(slug)}/plans`);
+}
+
+export function createPlan(slug: string, name: string, description?: string): Promise<PlanDetailResponse> {
+  return request<PlanDetailResponse>(`/admin/applications/${encodeURIComponent(slug)}/plans`, {
+    method: 'POST',
+    body: { name, description: description || undefined },
+  });
+}
+
+export function getPlan(slug: string, planId: string): Promise<PlanDetailResponse> {
+  return request<PlanDetailResponse>(
+    `/admin/applications/${encodeURIComponent(slug)}/plans/${encodeURIComponent(planId)}`,
+  );
+}
+
+export function updatePlan(
+  slug: string,
+  planId: string,
+  patch: { name?: string; description?: string },
+): Promise<PlanDetailResponse> {
+  return request<PlanDetailResponse>(
+    `/admin/applications/${encodeURIComponent(slug)}/plans/${encodeURIComponent(planId)}`,
+    { method: 'PATCH', body: patch },
+  );
+}
+
+export function deletePlan(slug: string, planId: string): Promise<void> {
+  return request<void>(
+    `/admin/applications/${encodeURIComponent(slug)}/plans/${encodeURIComponent(planId)}`,
+    { method: 'DELETE' },
+  );
+}
+
+export function setPlanFlag(slug: string, planId: string, flagKey: string, value: JsonValue): Promise<PlanFlagEntry> {
+  return request<PlanFlagEntry>(
+    `/admin/applications/${encodeURIComponent(slug)}/plans/${encodeURIComponent(planId)}/flags/${encodeURIComponent(flagKey)}`,
+    { method: 'PUT', body: { value } },
+  );
+}
+
+export function removePlanFlag(slug: string, planId: string, flagKey: string): Promise<void> {
+  return request<void>(
+    `/admin/applications/${encodeURIComponent(slug)}/plans/${encodeURIComponent(planId)}/flags/${encodeURIComponent(flagKey)}`,
+    { method: 'DELETE' },
+  );
+}
+
+// ---- Workgroup plan assignment ----
+
+export function getWorkgroupPlan(slug: string, workgroupId: string): Promise<WorkgroupPlanResponse> {
+  return request<WorkgroupPlanResponse>(
+    `/admin/applications/${encodeURIComponent(slug)}/workgroups/${encodeURIComponent(workgroupId)}/plan`,
+  );
+}
+
+export function assignWorkgroupPlan(
+  slug: string,
+  workgroupId: string,
+  planId: string,
+): Promise<WorkgroupPlanResponse> {
+  return request<WorkgroupPlanResponse>(
+    `/admin/applications/${encodeURIComponent(slug)}/workgroups/${encodeURIComponent(workgroupId)}/plan`,
+    { method: 'PUT', body: { planId } },
+  );
+}
+
+export function unassignWorkgroupPlan(slug: string, workgroupId: string): Promise<void> {
+  return request<void>(
+    `/admin/applications/${encodeURIComponent(slug)}/workgroups/${encodeURIComponent(workgroupId)}/plan`,
+    { method: 'DELETE' },
+  );
 }

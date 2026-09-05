@@ -62,7 +62,8 @@ public class SecurityConfig {
             @Value("${features.evaluation.bootstrap-application:audit}") String bootstrapApplication)
             throws Exception {
         http
-                .securityMatcher("/features-api/v1/evaluate", "/features-api/v1/health")
+                .securityMatcher("/features-api/v1/evaluate", "/features-api/v1/registrations",
+                        "/features-api/v1/health")
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))

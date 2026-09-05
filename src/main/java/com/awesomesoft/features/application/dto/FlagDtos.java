@@ -3,7 +3,9 @@ package com.awesomesoft.features.application.dto;
 import com.awesomesoft.features.domain.FlagKind;
 import com.awesomesoft.features.domain.ValueType;
 import tools.jackson.databind.JsonNode;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -55,6 +57,28 @@ public final class FlagDtos {
                                      LocalDate expiresAt, String owner, long overrideCount,
                                      LocalDateTime createdAt, LocalDateTime updatedAt,
                                      List<OverrideResponse> overrides) {
+    }
+
+    /**
+     * Self-registration payload: the flag catalog an application declares in its code. Same flag
+     * shape as {@link CreateFlagRequest} on the Admin API — {@code applicationSlug} must match the
+     * application the bearer token belongs to, so a token can never seed another application.
+     */
+    public record RegisterFlagsRequest(
+            @NotBlank @Size(max = 64) String applicationSlug,
+            @NotEmpty @Size(max = 200) @Valid List<CreateFlagRequest> flags) {
+    }
+
+    /** What the registration did: creations, keys that already existed, and type conflicts. */
+    public record RegistrationResponse(String applicationSlug, List<String> created, List<String> existing,
+                                       List<TypeMismatch> mismatched) {
+    }
+
+    /**
+     * The application declares a different value type than the flag has in the service. Not fixed
+     * here — {@code value_type} is immutable, so it needs a human (fix the code or recreate the flag).
+     */
+    public record TypeMismatch(String flagKey, ValueType declared, ValueType inService) {
     }
 
     public record SetOverrideRequest(@NotNull JsonNode value, @Size(max = 512) String note) {

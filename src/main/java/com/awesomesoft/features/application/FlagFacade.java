@@ -4,7 +4,10 @@ import com.awesomesoft.features.application.dto.FlagDtos.CreateFlagRequest;
 import com.awesomesoft.features.application.dto.FlagDtos.FlagDetailResponse;
 import com.awesomesoft.features.application.dto.FlagDtos.FlagResponse;
 import com.awesomesoft.features.application.dto.FlagDtos.OverrideResponse;
+import com.awesomesoft.features.application.dto.FlagDtos.RegisterFlagsRequest;
+import com.awesomesoft.features.application.dto.FlagDtos.RegistrationResponse;
 import com.awesomesoft.features.application.dto.FlagDtos.SetOverrideRequest;
+import com.awesomesoft.features.application.dto.FlagDtos.TypeMismatch;
 import com.awesomesoft.features.application.dto.FlagDtos.UpdateFlagRequest;
 import com.awesomesoft.features.application.dto.FlagDtos.WorkgroupOverrideResponse;
 import com.awesomesoft.features.domain.AuditOperation;
@@ -18,6 +21,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -67,13 +72,59 @@ public class FlagFacade {
         if (flagRepository.existsByApplicationIdAndFlagKey(app.getId(), request.flagKey())) {
             throw new IllegalStateException("Flag '" + request.flagKey() + "' already exists in '" + slug + "'");
         }
+        Flag flag = createFlag(app, request);
+        configChanged(app);
+        return toDetailResponse(flag);
+    }
+
+    /**
+     * Self-registration of the catalog an application declares in its code (called by the consumer
+     * itself with its backend token, not from the panel): creates the flags this application does
+     * not have yet and reports what it found.
+     *
+     * <p>Create-only by design. Name, description, default value, kind and overrides of an existing
+     * flag belong to whoever operates the panel and are never overwritten by a deploy; an archived
+     * flag counts as existing and stays archived. A declared type that disagrees with the stored
+     * one is reported rather than applied — {@code value_type} is immutable.
+     */
+    @Transactional
+    public RegistrationResponse register(String slug, RegisterFlagsRequest request) {
+        ClientApplication app = applicationFacade.getBySlug(slug);
+        Map<String, Flag> known = new HashMap<>();
+        flagRepository.findByApplicationIdOrderByFlagKey(app.getId())
+                .forEach(flag -> known.put(flag.getFlagKey(), flag));
+
+        List<String> created = new ArrayList<>();
+        List<String> existing = new ArrayList<>();
+        List<TypeMismatch> mismatched = new ArrayList<>();
+        for (CreateFlagRequest declaration : request.flags()) {
+            Flag flag = known.get(declaration.flagKey());
+            if (flag != null) {
+                existing.add(declaration.flagKey());
+                if (flag.getValueType() != declaration.valueType()) {
+                    mismatched.add(new TypeMismatch(declaration.flagKey(), declaration.valueType(),
+                            flag.getValueType()));
+                }
+                continue;
+            }
+            Flag saved = createFlag(app, declaration);
+            // Guards against a key repeated inside one payload hitting the unique constraint.
+            known.put(saved.getFlagKey(), saved);
+            created.add(saved.getFlagKey());
+        }
+        if (!created.isEmpty()) {
+            configChanged(app);
+        }
+        return new RegistrationResponse(app.getSlug(), created, existing, mismatched);
+    }
+
+    private Flag createFlag(ClientApplication app, CreateFlagRequest request) {
         String defaultValue = jsonValues.validateAndSerialize(request.valueType(), request.defaultValue());
         Flag flag = flagRepository.save(new Flag(app.getId(), request.flagKey(), request.name(),
                 request.description(), request.valueType(), defaultValue, request.flagKind(),
                 request.expiresAt(), request.owner()));
         auditRecorder.record(app.getId(), flag.getFlagKey(), AuditOperation.FLAG_CREATED, null, null, defaultValue);
-        configChanged(app);
-        return toDetailResponse(flag);
+        return flag;
     }
 
     @Transactional(readOnly = true)

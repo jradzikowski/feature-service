@@ -55,6 +55,7 @@ docker run -p 11230:11230 feature-service:latest
 ## API w skrócie
 
 - `POST /features-api/v1/evaluate` — wyliczone flagi dla kontekstu (`Bearer` token per aplikacja, ETag/304)
+- `POST /features-api/v1/registrations` — samorejestracja katalogu: aplikacja na własnym tokenie zakłada zadeklarowane w kodzie flagi, których serwis nie ma (tylko tworzy, idempotentne)
 - `GET /features-api/v1/health` — health bez auth
 - `/features-api/v1/admin/**` — Admin API (sesja `FEATURES_SESSION`; rola ADMIN mutuje, VIEWER czyta)
 - `/admin/` — panel administracyjny (SPA)
